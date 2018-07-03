@@ -1,6 +1,45 @@
-import numpy as np
 import scipy.stats
-from sklearn.model_selection import train_test_split
+
+import copy
+import os
+import numpy as np
+import pandas as pd
+from PIL import Image
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.utils.data
+from torch.utils.data.sampler import Sampler
+import random
+#from sklearn.model_selection import train_test_split
+
+def train_test_split(X, Y, split_rate):
+    
+    train_idx_overall = np.array([])
+    test_idx_overall = np.array([])
+
+    for l in np.unique(Y):
+
+        idx = np.where(Y == l)[0]
+
+        test_size = int(len(idx) * split_rate)
+
+        test_choice = np.random.choice(len(idx), size=test_size, replace=False)
+
+        train_idx = np.delete(idx, test_choice)
+
+        test_idx = idx[test_choice]
+        
+        train_idx_overall = np.append(train_idx_overall, train_idx)
+        
+        test_idx_overall = np.append(test_idx_overall, test_idx)
+        
+        
+    return (X[train_idx_overall.astype(int)], Y[train_idx_overall.astype(int)],
+            X[test_idx_overall.astype(int)], Y[test_idx_overall.astype(int)],
+            train_idx_overall, test_idx_overall)
+
 
 def running_mean (data):
     
@@ -209,3 +248,54 @@ def repeat_crop_data (x, size):
     x = x[:size]
     
     return x
+
+##################################
+## Class-aware sampling, partly implemented by frombeijingwithlove
+
+class RandomCycleIter:
+    
+    def __init__ (self, data):
+        self.data_list = list(data)
+        self.length = len(self.data_list)
+        self.i = self.length - 1
+        
+    def __iter__ (self):
+        return self
+    
+    def __next__ (self):
+        self.i += 1
+        
+        if self.i == self.length:
+            self.i = 0
+            random.shuffle(self.data_list)
+            
+        return self.data_list[self.i]
+    
+def class_aware_sample_generator (cls_iter, data_iter_list, n):
+    
+    i = 0
+    
+    while i < n:
+        yield next(data_iter_list[next(cls_iter)])
+        i += 1
+        
+class ClassAwareSampler (Sampler):
+    
+    def __init__ (self, data_source, num_classes, num_samples=0):
+        
+        self.data_source = data_source
+        self.class_iter = RandomCycleIter(range(num_classes))
+        class_data_list = [[] for _ in range(num_classes)]
+        
+        for idx, label in enumerate(self.data_source.Y.astype(np.int)):
+            class_data_list[label].append(idx) 
+            
+        self.data_iter_list = [RandomCycleIter(x) for x in class_data_list]
+        
+        self.num_samples = max([len(x) for x in class_data_list]) * len(class_data_list)
+        
+    def __iter__ (self):
+        return class_aware_sample_generator(self.class_iter, self.data_iter_list, self.num_samples)
+    
+    def __len__ (self):
+        return self.num_samples
